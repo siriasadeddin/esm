@@ -59,7 +59,7 @@ class ESMFold(nn.Module):
         self.esm, self.esm_dict = esm_registry.get(cfg.esm_type)()
 
         self.esm.requires_grad_(False)
-        self.esm.half()
+        #self.esm.half()
 
         self.esm_feats = self.esm.embed_dim
         self.esm_attns = self.esm.num_layers * self.esm.attention_heads
@@ -146,8 +146,10 @@ class ESMFold(nn.Module):
 
     def _mask_inputs_to_esm(self, esmaa, pattern):
         new_esmaa = esmaa.clone()
-        new_esmaa[pattern == 1] = self.esm_dict.mask_idx
+        mask = pattern * 1  # Convert boolean mask to integer (1s and 0s)
+        new_esmaa[mask == 1] = self.esm_dict.mask_idx  # Now this is supported
         return new_esmaa
+
 
     def forward(
         self,
@@ -171,7 +173,7 @@ class ESMFold(nn.Module):
             num_recycles (int): How many recycle iterations to perform. If None, defaults to training max
                 recycles, which is 3.
         """
-
+        
         if mask is None:
             mask = torch.ones_like(aa)
 
@@ -208,10 +210,24 @@ class ESMFold(nn.Module):
             s_z_0 = s_s_0.new_zeros(B, L, L, self.cfg.trunk.pairwise_state_dim)
 
         s_s_0 += self.embedding(aa)
+        import h5py
 
+        h = h5py.File('./language.h5', 'w')
+        h.create_dataset("input", data=aa.cpu().numpy())
+        h.create_dataset("output", data=s_s_0.cpu().numpy())
+        h.close()
+        
+        h = h5py.File('./trunk.h5', 'w')
+        h.create_dataset("s_s_0", data=s_s_0.cpu().numpy())
+        h.create_dataset("s_z_0", data=s_z_0.cpu().numpy())
+        h.create_dataset("aa", data=aa.cpu().numpy())
+        h.create_dataset("residx", data=residx.cpu().numpy())
         structure: dict = self.trunk(
             s_s_0, s_z_0, aa, residx, mask, no_recycles=num_recycles
         )
+        for k,v in structure.items():
+            h.create_dataset(k, data=v.cpu().numpy())
+        h.close()
         # Documenting what we expect:
         structure = {
             k: v
@@ -228,7 +244,8 @@ class ESMFold(nn.Module):
                 "states",
             ]
         }
-
+        print({k:v.shape for k,v in structure.items()})
+        
         disto_logits = self.distogram_head(structure["s_z"])
         disto_logits = (disto_logits + disto_logits.transpose(1, 2)) / 2
         structure["distogram_logits"] = disto_logits
@@ -238,7 +255,6 @@ class ESMFold(nn.Module):
 
         structure["aatype"] = aa
         make_atom14_masks(structure)
-
         for k in [
             "atom14_atom_exists",
             "atom37_atom_exists",
@@ -274,7 +290,10 @@ class ESMFold(nn.Module):
                 ptm_logits, max_bin=31, no_bins=self.distogram_bins
             )
         )
-
+        h = h5py.File('./structure.h5', 'w')
+        for k,v in structure.items():
+            h.create_dataset(k, data=v.cpu().numpy())
+        h.close()
         return structure
 
     @torch.no_grad()
@@ -318,7 +337,7 @@ class ESMFold(nn.Module):
         aatype, mask, residx, linker_mask = map(
             lambda x: x.to(self.device), (aatype, mask, residx, linker_mask)
         )
-
+        
         output = self.forward(
             aatype,
             mask=mask,
@@ -326,7 +345,6 @@ class ESMFold(nn.Module):
             masking_pattern=masking_pattern,
             num_recycles=num_recycles,
         )
-
         output["atom37_atom_exists"] = output[
             "atom37_atom_exists"
         ] * linker_mask.unsqueeze(2)

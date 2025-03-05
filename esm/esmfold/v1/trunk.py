@@ -101,7 +101,7 @@ class RelativePosition(nn.Module):
 
         if mask is not None:
             mask = mask[:, None, :] * mask[:, :, None]
-            diff[mask == False] = 0
+            diff[~mask.bool()] = 0
 
         output = self.embedding(diff)
         return output
@@ -190,22 +190,20 @@ class FoldingTrunk(nn.Module):
         recycle_bins = torch.zeros(*s_z.shape[:-1], device=device, dtype=torch.int64)
 
         assert no_recycles > 0
+        print(no_recycles)
         for recycle_idx in range(no_recycles):
             with ExitStack() if recycle_idx == no_recycles - 1 else torch.no_grad():
                 # === Recycling ===
                 recycle_s = self.recycle_s_norm(recycle_s.detach())
                 recycle_z = self.recycle_z_norm(recycle_z.detach())
                 recycle_z += self.recycle_disto(recycle_bins.detach())
-
                 s_s, s_z = trunk_iter(s_s_0 + recycle_s, s_z_0 + recycle_z, residx, mask)
-
                 # === Structure module ===
                 structure = self.structure_module(
                     {"single": self.trunk2sm_s(s_s), "pair": self.trunk2sm_z(s_z)},
                     true_aa,
                     mask.float(),
                 )
-
                 recycle_s = s_s
                 recycle_z = s_z
                 # Distogram needs the N, CA, C coordinates, and bin constants same as alphafold.
@@ -215,7 +213,7 @@ class FoldingTrunk(nn.Module):
                     21.375,
                     self.recycle_bins,
                 )
-
+                
         assert isinstance(structure, dict)  # type: ignore
         structure["s_s"] = s_s
         structure["s_z"] = s_z

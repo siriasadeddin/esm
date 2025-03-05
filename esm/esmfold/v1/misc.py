@@ -197,7 +197,7 @@ class Attention(nn.Module):
             mask = repeat(
                 mask, "... lk -> ... h lq lk", h=self.num_heads, lq=q.shape[-2]
             )
-            a = a.masked_fill(mask == False, -np.inf)
+            a = a.masked_fill(~mask.bool(), -np.inf)
 
         a = F.softmax(a, dim=-1)
 
